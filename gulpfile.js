@@ -5,15 +5,14 @@ const autoprefixer = require('gulp-autoprefixer');
 const browserSync = require('browser-sync').create();
 const concat = require('gulp-concat');
 const uglify = require('gulp-uglify-es').default;
+const plumber = require('gulp-plumber');
+const imagemin = require('gulp-imagemin');
+const rigger = require('gulp-rigger');
 const del = require('del');
-const imagecomp = require('compress-images');
-
-const IMG_INPUT_PATH = 'app/images/src/**/*';
-const IMG_OUTPUT_PATH = 'app/images/dest/';
 
 function browsersync() {
   browserSync.init({
-    server: { baseDir: './app' },
+    server: { baseDir: 'app/' },
     notify: false,
     online: true
   })
@@ -21,11 +20,21 @@ function browsersync() {
 
 function compileCode() {
   return src('app/*.html')
+    .pipe(plumber())
     .pipe(browserSync.stream());
 }
 
+function htmlBuild() {
+  return src('app/views/*.html')
+    .pipe(rigger())
+    .pipe(dest('app'))
+    .pipe(browserSync.stream());
+}
+
+// sass:
 function compileSass() {
-  return src('./app/scss/main.scss')
+  return src('app/styles/scss/main.scss')
+    .pipe(plumber())
     .pipe(sass({ includePaths: require('node-normalize-scss').includePaths }))
     .pipe(autoprefixer({ cascade: false }))
     .pipe(concat('main.min.css'))
@@ -34,42 +43,45 @@ function compileSass() {
     .pipe(browserSync.stream());
 }
 
-function scripts() {
-  return src('./app/js/main.js')
-    .pipe(concat('main.min.js'))
-    .pipe(uglify())
-    .pipe(dest('./app/js/'))
+
+// bootstrap styles and scripts:
+function bootstrap() {
+  return src(['node_modules/bootstrap/scss/**', 'src/scss/*.scss'])
+    .pipe(dest("app/styles/scss/bootstrap"))
     .pipe(browserSync.stream());
 }
 
+function jsBootstrap() {
+  return src(['node_modules/bootstrap/dist/js/bootstrap.min.js'])
+      .pipe(dest('app/scripts/src/_includes'))
+      .pipe(browserSync.stream());
+};
+
+// js:
+function scripts() {
+  return src(['app/scripts/src/_includes/**/*.js', 'app/scripts/src/**/*.js'])
+    .pipe(plumber())
+    .pipe(concat('app.min.js'))
+    .pipe(uglify())
+    .pipe(dest('./app/scripts'));
+}
+
+// looking for changes:
 function startWatch() {
   watch(['app/**/*.js', '!app/**/*.min.js'], scripts);
-  watch('app/scss/**/*.scss', compileSass);
-  watch('app/images/src/**/*', images);
+  watch('app/styles/scss/**/*.scss', compileSass).on('change', browserSync.reload);
+  watch('app/images/**/*', images);
+  watch('app/views/layouts/*.html', htmlBuild).on('change', browserSync.reload);
+  watch('app/views/*.html', htmlBuild).on('change', browserSync.reload);
   watch('app/*.html', compileCode).on('change', browserSync.reload);
 }
 
+//images:
 async function images() {
-  imagecomp(
-    IMG_INPUT_PATH,
-    IMG_OUTPUT_PATH,
-    { compress_force: false, statistic: true, autoupdate: true }, false,
-    { jpg: { engine: "mozjpeg", command: ["-quality", "75"] } },
-    { png: { engine: "pngquant", command: ["--quality=75-100", "-o"] } },
-    { svg: { engine: "svgo", command: "--multipass" } },
-    { gif: { engine: "gifsicle", command: ["--colors", "64", "--use-col=web"] } },
-    function (error, completed, statistic) {
-      console.log("-------------");
-      console.log(error);
-      console.log(completed);
-      console.log(statistic);
-      console.log("-------------");
-    }
-  )
-}
-
-function cleanImg() {
-  return del('app/images/dest/**/*', { force: true }) // Удаляем все содержимое папки "app/images/dest/"
+  src(['app/images/*.jpg', 'app/images/*.png'])
+    .pipe(plumber())
+    .pipe(imagemin({ optimizationLevel: 5, progressive: true, interlaced: true }))
+    .pipe(dest('app/images'));
 }
 
 function cleanUp() {
@@ -78,19 +90,19 @@ function cleanUp() {
 
 function buildProduction() {
   return src([
-    'app/css/**/*.min.css',
-    'app/js/**/*.min.js',
-    'app/images/dest/**/*',
-    'app/**/*.html',
+    'app/styles/**/*.min.css',
+    'app/scripts/*.min.js',
+    'app/images/**/*',
+    'app/*.html',
     ], { base: 'app' })
-  .pipe(dest('dist'))
+  .pipe(dest('dist'));
 }
 
 exports.browsersync = browsersync;
 exports.scripts = scripts;
 exports.compileSass = compileSass;
+exports.htmlBuild = htmlBuild;
 exports.compileCode = compileCode;
-exports.cleanimg = cleanImg;
 exports.images = images;
-exports.build = series(cleanUp, compileSass, scripts, images, buildProduction);
-exports.default = parallel(scripts, compileCode, compileSass, browsersync, startWatch);
+exports.build = series(cleanUp, jsBootstrap, scripts, compileCode, htmlBuild, bootstrap, compileSass, images, buildProduction);
+exports.default = parallel(jsBootstrap, scripts, compileCode, htmlBuild, bootstrap, compileSass, browsersync, startWatch);
